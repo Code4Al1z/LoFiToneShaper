@@ -3,15 +3,25 @@
 
 //==============================================================================
 AudioPluginAudioProcessor::AudioPluginAudioProcessor()
-     : AudioProcessor (BusesProperties()
-                     #if ! JucePlugin_IsMidiEffect
-                      #if ! JucePlugin_IsSynth
-                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
-                      #endif
-                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
-                     #endif
-                       )
+    : AudioProcessor(BusesProperties()
+#if ! JucePlugin_IsMidiEffect
+#if ! JucePlugin_IsSynth
+        .withInput("Input", juce::AudioChannelSet::stereo(), true)
+#endif
+        .withOutput("Output", juce::AudioChannelSet::stereo(), true)
+#endif
+    ),
+    parameters(*this, nullptr)
 {
+    parameters.createAndAddParameter("lowPassCutoff", "Low Pass Cutoff", "Hz", juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.5f), 8000.0f, nullptr, nullptr);
+    parameters.createAndAddParameter("highPassCutoff", "High Pass Cutoff", "Hz", juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.5f), 200.0f, nullptr, nullptr);
+    parameters.createAndAddParameter("focusGain", "Focus Gain", "dB", juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f, 0.5f), 3.0f, nullptr, nullptr);
+    parameters.createAndAddParameter("drive", "Drive", "", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f, 0.5f), 0.5f, nullptr, nullptr);
+    parameters.createAndAddParameter("bitDepth", "Bit Depth", "", juce::NormalisableRange<float>(4, 16, 1), 6.0f, nullptr, nullptr);
+    parameters.createAndAddParameter("sampleRateReduction", "Sample Rate Reduction", "", juce::NormalisableRange<float>(1, 10, 1), 4.0f, nullptr, nullptr);
+
+    // Attach parameters to the AudioProcessorValueTreeState
+    parameters.state = juce::ValueTree("savedParams");
 }
 
 AudioPluginAudioProcessor::~AudioPluginAudioProcessor()
@@ -94,11 +104,11 @@ void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerB
     highPassFilter.prepare(processSpec);
     focusFilter.prepare(processSpec);
 
-    // Example cutoff/gain values — eventually these should come from sliders
-    float lowPassCutoff = 8000.0f;
-    float highPassCutoff = 200.0f;
+    // Use values from the parameters
+    float lowPassCutoff = *parameters.getRawParameterValue("lowPassCutoff");
+    float highPassCutoff = *parameters.getRawParameterValue("highPassCutoff");
     float focusFreq = 2000.0f;
-    float focusGain = juce::Decibels::decibelsToGain(3.0f); // +3 dB boost
+    float focusGain = juce::Decibels::decibelsToGain(parameters.getRawParameterValue("focusGain")->load());
 
     lowPassFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, lowPassCutoff);
     highPassFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, highPassCutoff);
@@ -135,8 +145,7 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
   #endif
 }
 
-void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
-                                              juce::MidiBuffer& midiMessages)
+void AudioPluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
     juce::dsp::AudioBlock<float> block(buffer);
     juce::dsp::ProcessContextReplacing<float> context(block);
@@ -145,26 +154,25 @@ void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     lowPassFilter.process(context);
     focusFilter.process(context);
 
-    auto totalNumInputChannels  = getTotalNumInputChannels();
+    auto totalNumInputChannels = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
-        buffer.clear (i, 0, buffer.getNumSamples());
+        buffer.clear(i, 0, buffer.getNumSamples());
 
-    int bitDepth = 6;             // Eventually this will be user-controlled
-    int sampleRateReduction = 4;  // Likewise
+    int bitDepth = (int)*parameters.getRawParameterValue("bitDepth");
+    int sampleRateReduction = (int)*parameters.getRawParameterValue("sampleRateReduction");
 
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
         auto* channelData = buffer.getWritePointer(channel);
-
         for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
         {
             float inputSample = channelData[sample];
             float processedSample = applyBitReduction(inputSample, bitDepth, sampleRateReduction, sampleCounter, heldSample);
             channelData[sample] = processedSample;
 
-            float drive = 0.5f; // eventually from user control
+            float drive = *parameters.getRawParameterValue("drive");
             inputSample = applySaturation(inputSample, drive);
         }
     }

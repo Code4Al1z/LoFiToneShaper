@@ -43,6 +43,12 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    juce::AudioParameterFloat* bitDepthParameter;
+    juce::AudioParameterFloat* sampleRateReductionParameter;
+    juce::AudioParameterFloat* saturationDriveParameter;
+
+    juce::AudioProcessorValueTreeState parameters;
+
 private:
 
     // Function to apply bit reduction
