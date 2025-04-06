@@ -84,11 +84,25 @@ void AudioPluginAudioProcessor::changeProgramName (int index, const juce::String
 }
 
 //==============================================================================
-void AudioPluginAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void AudioPluginAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Use this method as the place to do any pre-playback
-    // initialisation that you need..
-    juce::ignoreUnused (sampleRate, samplesPerBlock);
+    processSpec.sampleRate = sampleRate;
+    processSpec.maximumBlockSize = samplesPerBlock;
+    processSpec.numChannels = getTotalNumOutputChannels();
+
+    lowPassFilter.prepare(processSpec);
+    highPassFilter.prepare(processSpec);
+    focusFilter.prepare(processSpec);
+
+    // Example cutoff/gain values — eventually these should come from sliders
+    float lowPassCutoff = 8000.0f;
+    float highPassCutoff = 200.0f;
+    float focusFreq = 2000.0f;
+    float focusGain = juce::Decibels::decibelsToGain(3.0f); // +3 dB boost
+
+    lowPassFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass(sampleRate, lowPassCutoff);
+    highPassFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass(sampleRate, highPassCutoff);
+    focusFilter.coefficients = juce::dsp::IIR::Coefficients<float>::makePeakFilter(sampleRate, focusFreq, 1.0f, focusGain);
 }
 
 void AudioPluginAudioProcessor::releaseResources()
@@ -124,32 +138,35 @@ bool AudioPluginAudioProcessor::isBusesLayoutSupported (const BusesLayout& layou
 void AudioPluginAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                               juce::MidiBuffer& midiMessages)
 {
-    juce::ignoreUnused (midiMessages);
+    juce::dsp::AudioBlock<float> block(buffer);
+    juce::dsp::ProcessContextReplacing<float> context(block);
 
-    juce::ScopedNoDenormals noDenormals;
+    highPassFilter.process(context);
+    lowPassFilter.process(context);
+    focusFilter.process(context);
+
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
-    // In case we have more outputs than inputs, this code clears any output
-    // channels that didn't contain input data, (because these aren't
-    // guaranteed to be empty - they may contain garbage).
-    // This is here to avoid people getting screaming feedback
-    // when they first compile a plugin, but obviously you don't need to keep
-    // this code if your algorithm always overwrites all the output channels.
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
 
-    // This is the place where you'd normally do the guts of your plugin's
-    // audio processing...
-    // Make sure to reset the state if your inner loop is processing
-    // the samples and the outer loop is handling the channels.
-    // Alternatively, you can process the samples with the channels
-    // interleaved by keeping the same state.
+    int bitDepth = 6;             // Eventually this will be user-controlled
+    int sampleRateReduction = 4;  // Likewise
+
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
-        auto* channelData = buffer.getWritePointer (channel);
-        juce::ignoreUnused (channelData);
-        // ..do something to the data...
+        auto* channelData = buffer.getWritePointer(channel);
+
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample)
+        {
+            float inputSample = channelData[sample];
+            float processedSample = applyBitReduction(inputSample, bitDepth, sampleRateReduction, sampleCounter, heldSample);
+            channelData[sample] = processedSample;
+
+            float drive = 0.5f; // eventually from user control
+            inputSample = applySaturation(inputSample, drive);
+        }
     }
 }
 
@@ -178,6 +195,24 @@ void AudioPluginAudioProcessor::setStateInformation (const void* data, int sizeI
     // You should use this method to restore your parameters from this memory block,
     // whose contents will have been created by the getStateInformation() call.
     juce::ignoreUnused (data, sizeInBytes);
+}
+
+float AudioPluginAudioProcessor::applyBitReduction(float input, int bitDepth, int sampleRateReduction, int& sampleCounter, float& heldSample)
+{
+    if (++sampleCounter >= sampleRateReduction)
+    {
+        sampleCounter = 0;
+        float maxVal = std::pow(2.0f, bitDepth - 1) - 1.0f;
+        heldSample = std::round(input * maxVal) / maxVal;
+    }
+    return heldSample;
+}
+
+float AudioPluginAudioProcessor::applySaturation(float inputSample, float drive)
+{
+    float gain = 1.0f + drive * 10.0f;
+    inputSample *= gain;
+    return std::tanh(inputSample);
 }
 
 //==============================================================================

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <juce_dsp/juce_dsp.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 //==============================================================================
@@ -43,6 +44,23 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
 private:
+
+    // Function to apply bit reduction
+    float applyBitReduction(float input, int bitDepth, int sampleRateReduction, int& sampleCounter, float& heldSample);
+
+    // Function to apply saturation (waveshaping)
+    float applySaturation(float inputSample, float drive);
+
+    int sampleCounter = 0;
+    float heldSample = 0.0f;
+
+    juce::dsp::IIR::Filter<float> lowPassFilter;
+    juce::dsp::IIR::Filter<float> highPassFilter;
+    juce::dsp::IIR::Filter<float> focusFilter;
+
+    juce::dsp::ProcessSpec processSpec;
+
+
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioPluginAudioProcessor)
 };
